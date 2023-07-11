@@ -1,0 +1,190 @@
+1.Given a table of purchases by date, calculate the month-over-month percentage change in revenue. The output should include the year-month date (YYYY-MM) and percentage change, rounded to the 2nd decimal point, and sorted from the beginning of the year to the end of the year.
+The percentage change column will be populated from the 2nd month forward and can be calculated as ((this month's revenue - last month's revenue) / last month's revenue)*100
+
+
+with tbl as (
+    select  to_char(created_at, 'YYYY-MM') as date_month,
+            sum(value) as revenue,
+            LAG(sum(value), 1) over(order by to_char(created_at, 'YYYY-MM')) as prev_revenue 
+    from sf_transactions
+    group by to_char(created_at, 'YYYY-MM')
+)
+
+select  date_month,
+        round((revenue - prev_revenue) / prev_revenue * 100, 2) as revenue_diff_pct
+from tbl
+
+
+2.ABC Corp is a mid-sized insurer in the US and in the recent past their fraudulent claims have increased significantly for their personal auto insurance portfolio. They have developed a ML based predictive model to identify propensity of fraudulent claims. Now, they assign highly experienced claim adjusters for top 5 percentile of claims identified by the model.
+Your objective is to identify the top 5 percentile of claims from each state. Your output should be policy number, state, claim cost, and fraud score.
+
+
+WITH tbl AS
+  (SELECT *,
+          PERCENT_RANK() over(partition BY STATE
+                              ORDER BY fraud_score DESC) AS pctl
+   FROM fraud_score)
+SELECT policy_num,
+       state,
+       claim_cost,
+       fraud_score
+FROM tbl
+WHERE pctl <= .05
+
+
+3.Find the total number of downloads for paying and non-paying users by date. Include only records where non-paying customers have more downloads than paying customers. The output should be sorted by earliest date first and contain 3 columns date, non-paying downloads, paying downloads
+
+
+
+select date,
+       sum(case when paying_customer ='no' then downloads end ) as 'non-paying users',
+       sum(case when paying_customer ='yes' then downloads end ) as 'paying users'
+from ms_user_dimension
+left join ms_acc_dimension
+on ms_user_dimension.acc_id = ms_acc_dimension.acc_id
+left join ms_download_facts
+ms_download_facts
+on ms_user_dimension.user_id=ms_download_facts.user_id 
+
+group by date
+having sum(case when paying_customer ='no' then downloads end )>
+       sum(case when paying_customer ='yes' then downloads end )
+order by date
+
+
+4.Find the popularity percentage for each user on Meta/Facebook. The popularity percentage is defined as the total number of friends the user has divided by the total number of users on the platform, then converted into a percentage by multiplying by 100.
+Output each user along with their popularity percentage. Order records in ascending order by user id.
+The 'user1' and 'user2' column are pairs of friends.
+
+
+with tbl1 as (
+select user1 as user,user2 as friend from facebook_friends
+union all
+select user2 as user,user1 as friend from facebook_friends),
+
+tbl2 as (
+select user,count(friend) as num_friend
+from tbl1
+group by user)
+
+select user,round(num_friend/(select count(*) from facebook_friends)*100,2) as popularity_percent
+from tbl2
+group by 1
+order by 1
+
+
+
+5.Find the top 5 states with the most 5 star businesses. Output the state name along with the number of 5-star businesses and order records by the number of 5-star businesses in descending order. In case there are ties in the number of businesses, return all the unique states. If two states have the same result, sort them in alphabetical order.
+
+
+
+with tbl as(select state,count(business_id) as buissness,rank() over (order by count(business_id) desc) as r from yelp_business
+where stars = 5
+group by state)
+
+select state,buissness from tbl
+where r in (1,2,3,4,5)
+order by 2 desc,1
+
+
+
+6.Find the number of times the words 'bull' and 'bear' occur in the contents. We're counting the number of times the words occur so words like 'bullish' should not be included in our count.
+Output the word 'bull' and 'bear' along with the corresponding number of occurrences.
+
+
+select 'bull' as word , count(contents) as nentry
+from google_file_store
+where contents like '%bull%'
+union  
+select 'bear' as word , count(contents) as nentry
+from google_file_store
+where contents like '%bear%'
+
+
+
+7.You're given a dataset of searches for properties on Airbnb. For simplicity, let's say that each search result (i.e., each row) represents a unique host. Find the city with the most amenities across all their host's properties. Output the name of the city.
+
+
+with amen_total as (
+select city, sum(length(amenities) - length(replace(amenities, ',', '')) + 1) as amen_cnt
+from airbnb_search_details
+group by city
+order by amen_cnt desc
+)
+
+select city
+from amen_total
+limit 1
+
+
+
+
+8.You’re given a table of rental property searches by users. The table consists of search results and outputs host information for searchers. Find the minimum, average, maximum rental prices for each host’s popularity rating. The host’s popularity rating is defined as below:
+0 reviews: New
+1 to 5 reviews: Rising
+6 to 15 reviews: Trending Up
+16 to 40 reviews: Popular
+more than 40 reviews: Hot
+
+
+Tip: The id column in the table refers to the search ID. You'll need to create your own host_id by concating price, room_type, host_since, zipcode, and number_of_reviews.
+
+
+Output host popularity rating and their minimum, average and maximum rental prices
+
+
+select 
+host_pop_rating,
+min(price) min_price,
+avg(price) avg_price,
+max(price) max_price
+from
+(select 
+CONCAT(price, room_type, host_since, zipcode, number_of_reviews) as host_id,
+price, 
+case when number_of_reviews = 0 then "New" 
+     when number_of_reviews between 1 and 5 then "Rising"
+     when number_of_reviews between 6 and 15 then "Trending Up"
+     when number_of_reviews between 16 and 40 then "Popular"
+     else "Hot" end as host_pop_rating
+    from airbnb_host_searches
+group by host_id)x 
+group by host_pop_rating
+
+
+9.You have a table of in-app purchases by user. Users that make their first in-app purchase are placed in a marketing campaign where they see call-to-actions for more in-app purchases. Find the number of users that made additional in-app purchases due to the success of the marketing campaign.
+
+
+The marketing campaign doesn't start until one day after the initial in-app purchase so users that only made one or multiple purchases on the first day do not count, nor do we count users that over time purchase only the products they purchased on the first day
+
+
+SELECT
+    COUNT(DISTINCT user_id) total_users
+FROM
+(
+    SELECT
+        user_id, created_at, 
+        DENSE_RANK() OVER(partition by user_id order by created_at) date_rnk,
+        DENSE_RANK() OVER(partition by user_id, product_id order by created_at) product_rnk
+    FROM marketing_campaign
+) t1
+WHERE date_rnk > 1 AND product_rnk = 1
+
+
+10.Select the most popular client_id based on a count of the number of users who have at least 50% of their events from the following list: 'video call received', 'video call sent', 'voice call received', 'voice call sent'.
+
+with cte as
+    (select 
+        user_id, 
+        100 * (sum(if(event_type in ('video call received', 'video call sent', 'voice call received', 'voice call sent'), 1, 0))/count(*)) as percentage
+    from fact_events 
+    group by 1
+    having percentage >= 50),
+
+
+
+
+
+
+
+
